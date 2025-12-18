@@ -9,7 +9,7 @@
 
 ---
 
-## 🚀 快速部署（新开发者必读）
+## 📣 快速部署（新开发者必读）
 
 ### 前置条件
 
@@ -70,8 +70,8 @@
 ### 本地开发
 
 ```bash
-# 1. 克隆你 Fork 的仓库
-git clone https://github.com/你的用户名/SMS-bombardment.git
+# 1. 克隆 Fork 仓库
+git clone https://github.com/Huo-zai-feng-lang-li/SMS-bombardment.git
 cd SMS-bombardment
 
 # 2. 安装 Wrangler CLI
@@ -181,4 +181,4 @@ Functions（类似于 Workers）。
 ## 作者其他项目
 
 - [Online-Mirror-master](https://github.com/Huo-zai-feng-lang-li/Online-Mirror-master) -
-  远程拍照源码，一键式部署 Cloudflare 服务实现全免费远程拍照
+  **远程拍照源码，一键式部署 Cloudflare 服务实现全免费远程拍照**
