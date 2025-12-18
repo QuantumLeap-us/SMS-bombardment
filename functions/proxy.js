@@ -51,7 +51,7 @@ export async function onRequest(context) {
 
     // 发起代理请求（添加超时控制）
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时（短信接口较慢）
     
     try {
       const response = await fetch(decodedUrl, {
