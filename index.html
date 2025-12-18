@@ -3378,21 +3378,21 @@ button:hover {
         // 多个代理备选列表（自动切换）
         // ⭐ 优先使用自定义域名代理，其次备用代理
         const CORS_PROXIES = [
-	    'https://proxy.zk99999.dpdns.org/?url=',         // ✅ 自定义域名代理（主力）
-	    '/functions/proxy?url=',                          // ✅ Cloudflare Pages Functions（主力）
-	    'http://localhost:8080/?url=',                    // 本地代理（备用）
+	    '/proxy?url=',                                    // ✅ Cloudflare Pages Functions（主力，最快）
+	    'https://proxy.zk99999.dpdns.org/?url=',         // ✅ 自定义域名代理（备用）
 	    'https://api.allorigins.win/raw?url=',           // 在线代理（备用）
+	    'http://localhost:8080/?url=',                    // 本地代理（仅本地测试）
         ];
         
         let currentProxyIndex = 0; // 当前使用的代理索引
         
         // 代理请求辅助函数（智能切换）
         function proxyUrl(url, proxyIndex = currentProxyIndex) {
-            if (USE_CORS_PROXY && proxyIndex < CORS_PROXIES.length - 1) {
+            if (USE_CORS_PROXY && proxyIndex < CORS_PROXIES.length) {
                 const proxy = CORS_PROXIES[proxyIndex];
                 return proxy + encodeURIComponent(url);
             }
-            return url; // 直连
+            return url; // 直连（仅当所有代理都失败时）
         }
         
         // ⭐ 增强的fetch函数（自动重试不同代理 + 请求去重）
@@ -3577,6 +3577,25 @@ button:hover {
     // 清空之前的请求缓存（新的发送任务开始时）
     requestCache.clear();
     
+    // ⭐ 快速测试第一个代理是否可用
+    addLog('⚙️ 正在测试代理连接...', 'info');
+    try {
+        const testUrl = proxyUrl('https://httpbin.org/get', 0);
+        const testResponse = await fetch(testUrl, { 
+            method: 'GET',
+            signal: AbortSignal.timeout(5000) // 5秒超时
+        });
+        if (testResponse.ok) {
+            addLog('✅ 代理连接正常', 'success');
+        } else {
+            addLog(`⚠️ 代理返回状态码: ${testResponse.status}`, 'error');
+            console.warn('代理可能不可用，但仍会尝试发送');
+        }
+    } catch (e) {
+        addLog(`❌ 代理测试失败: ${e.message}`, 'error');
+        addLog('⚠️ 将尝试使用备用代理', 'info');
+    }
+    
     // 设置运行标志
     isRunning = true;
     
@@ -3691,16 +3710,38 @@ button:hover {
                     let failReason = '';
                     let isRealSuccess = response.ok;
                     
-                    // 只有 200 返回 HTML 才检测是否是代理问题
-                    if (response.ok && isHtmlResponse) {
+                    // ⭐ 增强验证：检查所有200响应的内容
+                    if (response.ok) {
                         try {
                             const text = await response.clone().text();
-                            if (text.includes('Safety box') || (text.includes('<!DOCTYPE html>') && text.includes('服务器内部接口'))) {
+                            
+                            // 检测代理错误页面
+                            if (text.includes('Safety box') || 
+                                text.includes('<!DOCTYPE html>') || 
+                                text.includes('代理请求失败') ||
+                                text.includes('缺少 URL 参数') ||
+                                text.includes('请求超时') ||
+                                text.length < 10) { // 响应内容太短也可疑
                                 isRealSuccess = false;
                                 failReason = '代理异常';
-                                console.warn(`⚠️ 代理返回了HTML页面而非API响应: ${actualUrl}`);
+                                console.warn(`⚠️ 代理返回异常响应: ${text.substring(0, 100)}`);
                             }
-                        } catch (e) {}
+                            
+                            // 检测短信接口的失败响应（常见模式）
+                            const lowerText = text.toLowerCase();
+                            if (lowerText.includes('error') || 
+                                lowerText.includes('fail') ||
+                                lowerText.includes('失败') ||
+                                lowerText.includes('"code":-') ||
+                                lowerText.includes('"success":false') ||
+                                lowerText.includes('"status":0')) {
+                                isRealSuccess = false;
+                                failReason = '接口返回失败';
+                                console.warn(`⚠️ 接口返回失败: ${text.substring(0, 100)}`);
+                            }
+                        } catch (e) {
+                            console.warn(`⚠️ 无法读取响应内容: ${e.message}`);
+                        }
                     } else if (!response.ok) {
                         // 非200状态码，根据状态码判断原因
                         if (status === 404) {
@@ -3721,7 +3762,7 @@ button:hover {
                         globalSuccessCount++;
                         consecutiveFailures = 0;
                         console.log(`✅ [${status}] ${apiRequest.method || 'POST'} 成功 (${duration}ms): ${actualUrl}`);
-                        addLog(`✅ 成功 #${globalSuccessCount} (${duration}ms)`, 'success');
+                        addLog(`✅ 成功 #${globalSuccessCount} - 状态码: ${status} (${duration}ms)`, 'success');
                     } else {
                         failureCount++;
                         globalFailureCount++;
